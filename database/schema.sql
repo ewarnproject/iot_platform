@@ -61,6 +61,46 @@ CREATE TABLE IF NOT EXISTS project_components (
     FOREIGN KEY (component_id) REFERENCES components(id) ON DELETE CASCADE
 );
 
+-- Network devices discovered by IP/MAC. Sensor readings are grouped here.
+CREATE TABLE IF NOT EXISTS iot_devices (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    project_id INT,
+    microcontroller_id INT,
+    hardware_id VARCHAR(120) NOT NULL,
+    device_name VARCHAR(255),
+    ip_address VARCHAR(45) NOT NULL,
+    mac_address VARCHAR(50),
+    firmware_version VARCHAR(80),
+    last_seen_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uniq_hardware_id (hardware_id),
+    KEY idx_iot_devices_ip (ip_address),
+    FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE SET NULL,
+    FOREIGN KEY (microcontroller_id) REFERENCES microcontrollers(id) ON DELETE SET NULL
+);
+
+-- Real-time sensor readings posted by hardware.
+-- `readings` stores flexible payloads such as:
+-- {"temperature": 29.4, "humidity": 62, "pressure": 1009.8}
+CREATE TABLE IF NOT EXISTS sensor_readings (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    device_id INT NOT NULL,
+    project_id INT,
+    hardware_id VARCHAR(120) NOT NULL,
+    ip_address VARCHAR(45) NOT NULL,
+    sensor_type VARCHAR(120),
+    readings JSON NOT NULL,
+    raw_payload JSON,
+    recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    KEY idx_sensor_readings_device_time (device_id, recorded_at),
+    KEY idx_sensor_readings_ip_time (ip_address, recorded_at),
+    KEY idx_sensor_readings_hardware_time (hardware_id, recorded_at),
+    FOREIGN KEY (device_id) REFERENCES iot_devices(id) ON DELETE CASCADE,
+    FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE SET NULL
+);
+
 -- Insert initial projects
 INSERT INTO projects (name, description) VALUES
 ('Criminal Activity Detector and Monitoring System (CADMS)', 'Detects and monitors criminal activities.'),

@@ -118,11 +118,74 @@ For a better development experience in VSCode, consider installing these extensi
 *   **MySQL Connection Errors:** Double-check your `DB_HOST`, `DB_USER`, `DB_PASSWORD`, and `DB_NAME` in the `.env` file and ensure your MySQL server is running.
 *   **Network Issues:** Ensure both your development machine and any physical IoT devices are on the same network for scanning functionalities.
 
+## Sending Real-Time Hardware Data
+
+After running `database/schema.sql` and starting the backend, WiFi hardware can dump readings to:
+
+```text
+POST http://<your-computer-ip>:5000/api/realtime/readings
+Content-Type: application/json
+```
+
+Example payload:
+
+```json
+{
+  "project_id": 12,
+  "microcontroller_id": 1,
+  "hardware_id": "ESP32-135",
+  "device_name": "Weather station",
+  "ip_address": "192.168.1.45",
+  "mac_address": "AA:BB:CC:DD:EE:FF",
+  "sensor_type": "weather",
+  "readings": {
+    "temperature": 29.4,
+    "humidity": 62,
+    "pressure": 1009.8
+  }
+}
+```
+
+The backend stores the device by `hardware_id`, updates its current IP address, saves each reading in `sensor_readings`, and emits a Socket.IO event named `sensor:reading`.
+
+Fetch readings:
+
+```text
+GET http://localhost:5000/api/realtime/readings
+GET http://localhost:5000/api/realtime/readings?ip_address=192.168.1.45
+GET http://localhost:5000/api/realtime/readings?hardware_id=ESP32-135
+```
+
+ESP32 `HTTPClient` example:
+
+```cpp
+HTTPClient http;
+String url = "http://YOUR_COMPUTER_IP:5000/api/realtime/readings";
+http.begin(url);
+http.addHeader("Content-Type", "application/json");
+
+String payload = "{";
+payload += "\"project_id\":12,";
+payload += "\"hardware_id\":\"ESP32-135\",";
+payload += "\"device_name\":\"Weather station\",";
+payload += "\"ip_address\":\"" + WiFi.localIP().toString() + "\",";
+payload += "\"sensor_type\":\"weather\",";
+payload += "\"readings\":{";
+payload += "\"temperature\":" + String(temperature) + ",";
+payload += "\"humidity\":" + String(humidity) + ",";
+payload += "\"pressure\":" + String(pressure);
+payload += "}}";
+
+int httpCode = http.POST(payload);
+Serial.println(httpCode);
+http.end();
+```
+
 ## Next Steps (Development)
 
 *   Implement actual API calls from Flutter to the Node.js backend for authentication and project data.
 *   Integrate GitHub OAuth for repository access.
-*   Develop real-time communication for serial monitor and IoT device data.
+*   Connect the Flutter dashboard to the `sensor:reading` Socket.IO event.
 *   Implement actual network scanning and Bluetooth pairing logic.
 
 ---

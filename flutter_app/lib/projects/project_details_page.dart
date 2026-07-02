@@ -1,5 +1,9 @@
+import 'dart:async';
+import 'dart:convert';
+
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 import 'package:url_launcher/url_launcher.dart';
 import '../code_editor/code_editor_page.dart';
 import '../services/github_api.dart';
@@ -91,9 +95,41 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage>
   bool _loadingGithubFiles = false;
   List<Map<String, String>>? _githubFileRows;
   String? _githubFilesError;
+  Timer? _readingsTimer;
+  bool _loadingReadings = false;
+  String? _readingsError;
+  List<Map<String, dynamic>> _readings = [];
+
+  final List<String> _availableBoards = [
+    'Arduino Uno',
+    'Arduino Mega 2560',
+    'Arduino Nano',
+    'ESP32 Dev Module',
+  ];
+  final List<String> _availablePorts = [
+    'COM3',
+    'COM4',
+    'COM5',
+    '/dev/ttyUSB0',
+  ];
+  String? _selectedBoard;
+  String? _selectedPort;
+
+  @override
+  void initState() {
+    super.initState();
+    _selectedBoard = _availableBoards.first;
+    _selectedPort = _availablePorts.first;
+    _loadReadings();
+    _readingsTimer = Timer.periodic(
+      const Duration(seconds: 3),
+      (_) => _loadReadings(silent: true),
+    );
+  }
 
   @override
   void dispose() {
+    _readingsTimer?.cancel();
     _tabs.dispose();
     _heroCtrl.dispose();
     super.dispose();
@@ -231,6 +267,42 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage>
       _fileSets[widget.category] ?? _fileSets['default']!;
   Map<String, List<String>> get _hw =>
       _hwSets[widget.category] ?? _hwSets['default']!;
+
+  Future<void> _loadReadings({bool silent = false}) async {
+    if (!silent) {
+      setState(() {
+        _loadingReadings = true;
+        _readingsError = null;
+      });
+    }
+
+    try {
+      final uri = Uri.parse(
+        '${GithubApi.baseUrl}/realtime/readings?limit=10',
+      );
+      final res = await http.get(uri);
+      if (res.statusCode < 200 || res.statusCode >= 300) {
+        throw Exception('Backend returned ${res.statusCode}');
+      }
+
+      final rows = (jsonDecode(res.body) as List)
+          .map((row) => Map<String, dynamic>.from(row as Map))
+          .toList();
+
+      if (!mounted) return;
+      setState(() {
+        _readings = rows;
+        _readingsError = null;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _readingsError = 'Waiting for readings from hardware');
+    } finally {
+      if (mounted && !silent) {
+        setState(() => _loadingReadings = false);
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -436,6 +508,8 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage>
           ),
         ]),
         const SizedBox(width: 16),
+        _boardPortControls(),
+        const SizedBox(width: 16),
         // action buttons
         if (_githubBusy)
           const Padding(
@@ -478,6 +552,73 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage>
           ]),
         ),
       );
+
+  Widget _boardPortControls() => Row(
+        children: [
+          SizedBox(
+            width: 170,
+            child: _dropdownField(
+              label: 'Board',
+              value: _selectedBoard,
+              items: _availableBoards,
+              onChanged: (value) => setState(() => _selectedBoard = value),
+            ),
+          ),
+          const SizedBox(width: 10),
+          SizedBox(
+            width: 120,
+            child: _dropdownField(
+              label: 'Port',
+              value: _selectedPort,
+              items: _availablePorts,
+              onChanged: (value) => setState(() => _selectedPort = value),
+            ),
+          ),
+        ],
+      );
+
+  Widget _dropdownField({
+    required String label,
+    required String? value,
+    required List<String> items,
+    required ValueChanged<String?> onChanged,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label,
+            style: TextStyle(
+                color: Colors.white.withOpacity(.45), fontSize: 10)),
+        const SizedBox(height: 4),
+        Container(
+          height: 36,
+          padding: const EdgeInsets.symmetric(horizontal: 10),
+          decoration: BoxDecoration(
+            color: const Color(0xFF0D1B2E),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: Colors.white.withOpacity(.08)),
+          ),
+          child: DropdownButtonHideUnderline(
+            child: DropdownButton<String>(
+              value: value,
+              isExpanded: true,
+              dropdownColor: const Color(0xFF0D1B2E),
+              iconEnabledColor: Colors.white54,
+              style: const TextStyle(color: Colors.white, fontSize: 12),
+              items: items
+                  .map((item) => DropdownMenuItem(
+                        value: item,
+                        child: Text(item,
+                            style: const TextStyle(fontSize: 12)),
+                      ))
+                  .toList(),
+              onChanged: onChanged,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
 
   // ── TAB BAR ───────────────────────────────────────────────────────────────
   Widget _tabBar() => Container(
@@ -532,6 +673,8 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage>
         }),
         const SizedBox(height: 16),
         _techTagsCard(),
+        const SizedBox(height: 16),
+        _readingsCard(),
         const SizedBox(height: 16),
         _githubCard(),
       ]),
@@ -637,6 +780,114 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage>
           }).toList(),
         ),
       );
+
+  Widget _readingsCard() => _panel(
+        icon: Icons.sensors_rounded,
+        title: 'Live Sensor Readings',
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            Icon(Icons.circle,
+                size: 8,
+                color: _readings.isEmpty
+                    ? Colors.amberAccent
+                    : const Color(0xFF06D6A0)),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                _readings.isEmpty
+                    ? (_readingsError ?? 'No readings received yet')
+                    : 'Showing latest ${_readings.length} reading(s)',
+                style: TextStyle(
+                    color: Colors.white.withOpacity(.45), fontSize: 12),
+              ),
+            ),
+            GestureDetector(
+              onTap: _loadingReadings ? null : _loadReadings,
+              child: Icon(Icons.refresh_rounded,
+                  size: 18, color: Colors.white.withOpacity(.45)),
+            ),
+          ]),
+          const SizedBox(height: 14),
+          if (_loadingReadings && _readings.isEmpty)
+            const Center(child: CircularProgressIndicator())
+          else if (_readings.isEmpty)
+            Text(
+              'Post JSON to http://YOUR_COMPUTER_IP:5000/data or /api/realtime/readings.',
+              style: TextStyle(color: Colors.white.withOpacity(.35), fontSize: 12),
+            )
+          else
+            ..._readings.map(_readingRow),
+        ]),
+      );
+
+  Widget _readingRow(Map<String, dynamic> row) {
+    final readings = _decodeReadings(row['readings']);
+    final device = row['device_name']?.toString().isNotEmpty == true
+        ? row['device_name'].toString()
+        : row['hardware_id']?.toString() ?? 'Hardware';
+    final ip = row['ip_address']?.toString() ?? 'unknown IP';
+    final time = row['recorded_at']?.toString() ?? '';
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(.035),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.white.withOpacity(.07)),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Icon(Icons.developer_board_rounded, size: 14, color: widget.accent),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(device,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700)),
+          ),
+          Text(ip,
+              style: TextStyle(color: Colors.white.withOpacity(.35), fontSize: 11)),
+        ]),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: readings.entries.map((entry) {
+            return Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: widget.accent.withOpacity(.08),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: widget.accent.withOpacity(.18)),
+              ),
+              child: Text('${entry.key}: ${entry.value}',
+                  style: TextStyle(
+                      color: widget.accent,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600)),
+            );
+          }).toList(),
+        ),
+        if (time.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          Text(time,
+              style: TextStyle(color: Colors.white.withOpacity(.25), fontSize: 10)),
+        ],
+      ]),
+    );
+  }
+
+  Map<String, dynamic> _decodeReadings(dynamic value) {
+    if (value is Map) return Map<String, dynamic>.from(value);
+    if (value is String && value.isNotEmpty) {
+      final decoded = jsonDecode(value);
+      if (decoded is Map) return Map<String, dynamic>.from(decoded);
+    }
+    return {};
+  }
 
   Widget _githubCard() => _panel(
         icon: Icons.code_rounded,
@@ -998,22 +1249,31 @@ class _ProjectDetailsPageState extends State<ProjectDetailsPage>
         _fileBtn(Icons.play_arrow_rounded, 'Run',
             const Color(0xFF06D6A0), () {
           final isRemote = f['ver'] == 'remote' || _githubRepoUrl != null;
+          final page = CodeEditorPage(
+            fileName: f['name']!,
+            autoCompile: true,
+            board: _selectedBoard,
+            port: _selectedPort,
+          );
           if (isRemote && _githubRepoUrl != null) {
             Navigator.push(
               context,
               MaterialPageRoute(
                 builder: (_) => CodeEditorPage(
-                    fileName: f['name']!,
-                    projectId: widget.projectId,
-                    remotePath: f['name'],
-                    autoCompile: true),
+                  fileName: f['name']!,
+                  projectId: widget.projectId,
+                  remotePath: f['name'],
+                  autoCompile: true,
+                  board: _selectedBoard,
+                  port: _selectedPort,
+                ),
               ),
             );
           } else {
             Navigator.push(
               context,
               MaterialPageRoute(
-                builder: (_) => CodeEditorPage(fileName: f['name']!, autoCompile: true),
+                builder: (_) => page,
               ),
             );
           }
